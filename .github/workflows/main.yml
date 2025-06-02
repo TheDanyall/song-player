@@ -1,0 +1,96 @@
+name: Build Kivy APK
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.8'
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y python3-pip git zip unzip openjdk-8-jdk wget
+        python -m pip install --upgrade pip
+        pip install buildozer cython==0.29.19 virtualenv
+        
+    - name: Set up Android SDK and NDK
+      run: |
+        # Create Android SDK directory
+        mkdir -p android-sdk
+        cd android-sdk
+        
+        # Download and extract command line tools
+        wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
+        unzip -q cmdline-tools.zip -d cmdline-tools
+        mkdir -p cmdline-tools/latest
+        mv cmdline-tools/* cmdline-tools/latest/
+        rm cmdline-tools.zip
+        
+        # Set environment variables
+        echo "ANDROID_SDK_ROOT=$GITHUB_WORKSPACE/android-sdk" >> $GITHUB_ENV
+        echo "ANDROID_HOME=$GITHUB_WORKSPACE/android-sdk" >> $GITHUB_ENV
+        echo "PATH=$GITHUB_WORKSPACE/android-sdk/cmdline-tools/latest/bin:$PATH" >> $GITHUB_ENV
+        
+        # Accept licenses
+        yes | cmdline-tools/latest/bin/sdkmanager --licenses
+        
+        # Install required components
+        cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-33" "build-tools;33.0.1"
+        
+        # Download and install NDK
+        cd $GITHUB_WORKSPACE
+        wget -q https://dl.google.com/android/repository/android-ndk-r25c-linux.zip -O ndk.zip
+        unzip -q ndk.zip
+        rm ndk.zip
+        
+        echo "ANDROID_NDK_HOME=$GITHUB_WORKSPACE/android-ndk-r25c" >> $GITHUB_ENV
+        echo "PATH=$GITHUB_WORKSPACE/android-ndk-r25c:$PATH" >> $GITHUB_ENV
+    
+    - name: Install Python packages
+      run: |
+        pip install kivy==2.3.0 pygame==2.5.2 mutagen==1.47.0
+        
+    - name: Create buildozer.spec
+      run: |
+        cat <<EOF > buildozer.spec
+        [app]
+        title = Music Player
+        package.name = musicplayer
+        package.domain = org.example
+        source.dir = .
+        source.include_exts = py,png,jpg,mp3,kv
+        version = 1.0.0
+        requirements = python3,kivy==2.3.0,pygame==2.5.2,mutagen==1.47.0,hostpython3
+        android.permissions = INTERNET
+        android.api = 33
+        android.minapi = 21
+        android.ndk_path = $ANDROID_NDK_HOME
+        android.sdk_path = $ANDROID_SDK_ROOT
+        p4a.branch = master
+        orientation = portrait
+        fullscreen = 0
+        EOF
+    
+    - name: Build APK
+      run: |
+        buildozer init
+        buildozer -v android debug
+        
+    - name: Upload APK artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: music-player-apk
+        path: bin/*.apk
+        if-no-files-found: error
